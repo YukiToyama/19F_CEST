@@ -1,0 +1,314 @@
+; 19F_CEST_ig_yt_600_cp
+
+/* 
+  Written  by YT Sep 6th, 2023  
+  Modified from 19F_aring_ig_yt_600_cp
+
+  Utilizing the anti-ringing triple pulse for excitation to relieve base-line distortion
+  caused by acoustic ringing.
+  Ref: Wang et al., JMR 2021 332 107067,  JBNMR 2020 74:753
+  
+  Min phase cycle is 16 for phase cycled experiments, 8 for non-phase cycled experiments. 
+  The reference exp is always recorded with TEx = 0.
+  Heat compensation is performed only when 1H dec is used.
+
+  For B1 calibration, set -Dcal_B1 flg and DH_dec.
+  Set vdlist(n*acq where acq = 1/SW). 
+
+  DH_dec flag was added to perform 1H composite pulse decoupling during Trelax.
+  use p90x240y90x.p11 for CPDPRG1
+  When using 90x-240y-90x 1H decoupling, sidebands are observed at about p/m 430 Hz per 1 kHz decoupling field. 
+
+  19F inversion element with receiver phase cycling was added at the begining of the sequence
+  With D_cycle flag, the magnetization decays to 0 with the apparent R1 relaxation rate,
+  
+  Note: This script can be used to measure R1 of 19F.
+  Set: Dcal_B1, DH_dec, Dcycle
+  set CPDPRG1 to a pulse train (2.5 ms - 180 1H - 2.5 ms) along with the appropriate power for the 180 deg pulse.
+  Turn off 19 CW field and set vd list to the desired sampling schedule.
+  The signal decays to 0 with the R1 rate. 
+  ns set to 16n
+
+  Note: This script can be used to measure heternuclear NOE between 1H-19F.
+  Set: Dcal_B1, DH_dec
+  Turn off 19 CW field and set vd list to the saturation time (~4sec will be enough).
+  For NOE exp, set CPDPRG1 to a pulse train (2.5 ms - 180 1H - 2.5 ms) along with the appropriate power for the 180 deg pulse.
+  Set d1 to be long (8-10 sec) to ensure the magnetization goes back to thermal equilibrium. 
+  For reference exp, use the same setting above by turning of the 1H decoupling.
+  The ratio of intensity between the two experiments gives the hetNOE value.
+  ns set to 8n
+
+*/
+
+#include <Avance.incl> 
+#include <Grad.incl>
+#include <Delay.incl>
+
+
+;Define phases
+#define zero ph=0.0
+#define one ph=90.0
+#define two ph=180.0
+#define three ph=270.0
+
+ "d11=30m"
+ "d12=20u"
+ "p25 = 1000000.0/(4.0*cnst20)"  ; cnst20 in Hz is the B1 field 
+ "plw25 = plw1*(p1)*(p1)/((p25)*(p25))" ;  power level for weak CO B1 field
+ "acqt0=-p1*2.0/PI"
+
+define delay time_T1
+ "time_T1=d13"         /* CEST duration - typically 200-600 ms */
+
+define delay time_T1_max
+ "time_T1_max=d14"
+
+define delay dly_lk
+ "dly_lk = d17"
+
+
+define list<frequency> F_offset=<$FQ1LIST> ; the name of the file with the B1 freq values
+
+#ifdef cal_B1
+
+define list<delay> time_cal = <$VDLIST>
+
+#endif
+
+  "l2=0" ; pointer to time_cal when cal_NB1 is set 
+
+
+/* BEGIN ACTUAL PULSE SEQUENCE */
+
+1 ze
+  d11 pl1:f1  pl12:f2
+
+ if "dly_lk > 41m" 
+   {
+   2u
+   print "error: ly_lk too long < 40 ms"
+   goto HaltAcqu
+   }
+  if "time_T1 > 500m"
+   {
+   2u
+   print "error: Fsat time time_T1 is too long"
+   goto HaltAcqu
+   }
+
+2 30m do:f2
+
+/* heating element*/
+
+#ifdef H_dec
+
+   (2u pl11):f2           ; power(1H deocuplign during CEST)
+   (2u cpds1 zero):f2     ; Turn ON 1H decoupling at power pl11
+
+if "F_offset.idx == 0"
+   {
+   time_T1_max          
+   } 
+else
+   {
+   if "time_T1 < time_T1_max"
+   {
+   "DELTA = time_T1_max - time_T1"
+   DELTA
+   }
+   }
+   (2u do):f2             ; Turn OFF 1H decoupling   
+   (2u pl12):f2           ; power pl12 for 1H decoupling during acquisition
+
+#endif
+
+   (2u pl1):f1            ; power pl1 for 19F pulses
+   2u fq=0:f1             ; SFO1
+
+/* end of heating element */
+
+/* Purge element */
+
+   20u UNBLKGRAD           ; delay(20.0e-6) unblank gradients & lk_hold
+   2u pl13:f1
+   (2u cw zero):f1
+   dly_lk                  ; turn on cw decoupling for a delay of dly_lk
+   2u do:f1
+   (2u cw one):f1
+   "DELTA = dly_lk/2.0"
+   DELTA                   ; turn on cw decoupling for a delay of dly_lk
+   2u do:f1
+   p50:gp0*0.5             ; gradient 0 (50%)
+   d16
+   2u pl1:f1
+   (p1 zero):f1            ; F90x
+   2u                     
+   p50:gp0                 ; gradient 0
+   d16                  
+   (p1 one):f1             ; F90y
+   2u                     
+   p50:gp0*0.3             ; gradient 0 (30%)
+   d16                  
+   10u BLKGRAD             ; delay(10.0e-6) blank gradients
+
+/* Interscan delay */
+  d1                      ; delay(d1)
+
+/* This is the real start */
+
+#ifdef cycle
+   (p1 ph4):f1
+   (p1 ph5):f1
+#endif
+
+#ifdef cal_B1
+
+   "DELTA=time_cal[l2]"
+   (2u pl25):f1           ; power(weak 19F B1 field for CEST)
+    2u fq=cnst1:f1        ; SFO1 + cnst1(Hz) 
+
+#ifdef H_dec
+   (2u pl11):f2           ; power(1H deocuplign during CEST)
+   (2u cpds1 zero):f2     ; Turn ON 1H decoupling at power pl11
+#endif
+
+   (1u cpds5 zero):f1      ; Turn ON 19F CW 
+   DELTA  
+   (2u do):f1             ; Turn OFF 19F CW
+
+#ifdef H_dec
+   (2u do):f2             ; Turn OFF 1H decoupling   
+   (2u pl12):f2            ; power pl12 for 1H decoupling during acquisition
+#endif
+
+   (2u pl1):f1              ;power(tpwr) pl1 for 19F pulses
+   2u fq=0:f1              ; SFO1 
+   
+   10u UNBLKGRAD         ; delay(10.0e-6) unblank gradients & lk_hold
+   p51:gp1               ; gradient 1
+   d16                  
+   10u BLKGRAD           ; delay(10.0e-6) blank gradients
+
+#else /* else cal_B1 */
+
+/* start time_T1 relaxation/exchange period */
+
+   (2u pl25):f1           ; power(weak 19F B1 field for CEST)
+   2u fq=F_offset:f1      ; SFO1 + F_offset(Hz)
+
+if "F_offset.idx == 0"
+  {
+   "DELTA = 0u"           ; Reference plane is recorded with Trelax = 0 
+  }
+else
+  {
+   "DELTA = time_T1"
+  }
+
+#ifdef H_dec
+   (2u pl11):f2           ; power(1H deocuplign during CEST)
+   (2u cpds1 zero):f2     ; Turn ON 1H decoupling at power pl11
+#endif
+
+   (1u cpds5 zero):f1     ; Turn ON 19F CW decoupling at power pl25
+   DELTA
+   (2u do):f1             ; Turn OFF 19F CW
+
+#ifdef H_dec
+   (2u do):f2             ; Turn OFF 1H decoupling   
+   (2u pl12):f2           ; power pl12 for 1H decoupling during acquisition
+#endif 
+
+   (2u pl1):f1            ; power pl1 for 19F pulses
+   2u fq=0:f1             ; SFO1
+   
+   10u UNBLKGRAD         ; delay(10.0e-6) unblank gradients & lk_hold
+   p51:gp1               ; gradient 1
+   d16                  
+   10u BLKGRAD           ; delay(10.0e-6) blank gradients
+
+#endif  /* end cal_B1 */
+   
+
+/* end of time_T1 exchange period */
+
+#ifdef cycle
+   (p1 ph11):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+   1u
+   (p1 ph12):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+   1u
+   (p1 ph13):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+/* acquire data */
+  go=2 ph30  cpd2:f2
+
+#else
+   (p1 ph1):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+   1u
+   (p1 ph2):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+   1u
+   (p1 ph3):f1          ;rgpulse(pw,zero,1.0e-6,0.0)
+/* acquire data */
+  go=2 ph31  cpd2:f2
+
+#endif /* end cycle */
+
+  d11 do:f2 mc #0 to 2 F0(zd)
+ 
+#ifdef cal_B1
+  F1QF(calclc(l2, 1))
+#else
+  F1QF(calclist(F_offset,1))
+#endif
+
+HaltAcqu, 1m
+exit
+
+; Pulse and receiver phase for non-phase cycled experiment 
+ph1=0 2 0 2 0 2 0 2 1 3 1 3 1 3 1 3
+ph2=2 2 0 0 2 2 0 0 3 3 1 1 3 3 1 1 
+ph3=0 0 0 0 2 2 2 2 1 1 1 1 3 3 3 3
+ph31=0 2 2 0 2 0 0 2 1 3 3 1 3 1 1 3
+
+; Pulse and receiver phase for phase cycled experiment 
+ph11=0 2 0 2 0 2 0 2 0 2 0 2 0 2 0 2 1 3 1 3 1 3 1 3 1 3 1 3 1 3 1 3
+ph12=2 2 0 0 2 2 0 0 2 2 0 0 2 2 0 0 3 3 1 1 3 3 1 1 3 3 1 1 3 3 1 1
+ph13=0 0 0 0 2 2 2 2 0 0 0 0 2 2 2 2 1 1 1 1 3 3 3 3 1 1 1 1 3 3 3 3
+ph4=0
+ph5=2 2 2 2 2 2 2 2 0 0 0 0 0 0 0 0
+ph30=0 2 2 0 2 0 0 2 2 0 0 2 0 2 2 0 1 3 3 1 3 1 1 3 3 1 1 3 1 3 3 1
+
+ph26=0
+
+
+;p11 : 90 deg pulse length for 1H CPD decoupling during CEST period
+;pl1 : tpwr - power level for 19F 90 deg hard pulse
+;pl11 : power level for 1H decoupling during CEST period.
+;pl12 : power level for 1H decoupling during acquisition.
+;pl13 : power level for scrambling , typically about 23dB less power than high power
+;pl25 : power level for weak 19F CEST B1 field
+;p1   : 90 deg pulse for 19F
+;p50  : gradient pulse 50 [512 usec]
+;p51  : gradient pulse 51 [256 usec]
+;d11 : delay for disk i/o, 30ms
+;d13 : time_T1 CEST duration ~400ms
+;d14 : time_T1_max max CEST duration ~400ms
+;d17 : delay for scrambling - set to 40 ms
+;cpd1: 1H decoupling sequence during CEST
+;cpd2: 1H decoupling sequence during acquisition
+;cpd5: 19F CW during CEST
+;cpdprg1: 1H decoupling sequence during CEST
+;cpdprg2: 1H decoupling sequence during acquisition
+;cpdprg5: 19F CW during CEST (cwp)
+;pcpd1: f2 channel - 90 degree pulse for decoupling sequence (CEST period)
+;pcpd2: f2 channel - 90 degree pulse for decoupling sequence (acquisition)
+;cnst1 : diff in (19F) Hz between peak and carrier for callibration
+;cnst20 : weak B1 field in Hz ~ 20-50 Hz
+;zgoptns : Dcal_B1, DH_dec, Dcycle
+
+;for z-only gradients:
+;gpz0: 60%
+;gpz1: 80%
+
+;use gradient files:
+;gpnam0: SMSQ10.32
+;gpnam1: SMSQ10.32
