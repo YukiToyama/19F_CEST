@@ -29,7 +29,7 @@
   The signal decays to 0 with the R1 rate. 
   ns set to 16n
 
-  Note: This script can be used to measure heternuclear NOE between 1H-19F.
+  Note: This script can be used to measure heteronuclear NOE between 1H-19F.
   Set: Dcal_B1, DH_dec
   Turn off 19 CW field and set vd list to the saturation time (~4sec will be enough).
   For NOE exp, set CPDPRG1 to a pulse train (2.5 ms - 180 1H - 2.5 ms) along with the appropriate power for the 180 deg pulse.
